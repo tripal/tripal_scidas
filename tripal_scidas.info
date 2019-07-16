@@ -1,0 +1,6 @@
+name = Tripal SciDAS
+description = Integration of Tripal with the SciDAS Nextflow API.
+core = 7.x
+project = tripal_scidas
+package = Tripal Extensions
+version = 7.x-1.x

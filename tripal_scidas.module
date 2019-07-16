@@ -1,0 +1,934 @@
+<?php
+
+/**
+ * @file
+ * The module for for the tripal_scidas module.
+ */
+
+require 'api/tripal_scidas.api.inc';
+require 'api/NextflowGKERequest.api.inc';
+require 'api/NextflowGKEInstance.api.inc';
+require 'api/NextflowGKEError.api.inc';
+require 'api/NextflowGKEService.api.inc';
+require 'api/NextflowGKEWorkflow.api.inc';
+require 'includes/tripal_scidas.webform.inc';
+
+/**
+ * Implements hook_init().
+ */
+function tripal_scidas_init() {
+
+}
+
+/**
+ * Implements hook_permissions().
+ *
+ * Set the permission types that this module uses.
+ */
+function tripal_scidas_permission() {
+  return [
+    'use scidas' => [
+      'title' => t('Execute SciDAS Workflows'),
+      'description' => t('Allows a user to submit a published workflow for execution on a remote scidas Instance'),
+    ],
+    'administer scidas' => [
+      'title' => t('Administer SciDAS'),
+      'description' => t('Allows a user to configure site-wide default SciDAS instances.'),
+    ],
+  ];
+}
+
+/**
+ * Implements hook_menu().
+ *
+ * Specifies menu items and URLs used by this module.
+ */
+function tripal_scidas_menu() {
+  $items = [];
+
+  // EXPLANATION: all extension modules should have an administrative menu item
+  // with the path set to 'admin/tripal/extension/[module name]'.
+  $items['admin/tripal/extension/scidas'] = [
+    'title' => 'SciDAS',
+    'description' => 'Integrate workflows from a remote SciDAS instance with this Tripal site',
+    'page callback' => 'tripal_scidas_admin_home',
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_NORMAL_ITEM,
+    'file' => 'includes/tripal_scidas.admin.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+  ];
+
+  // Edit SciDAS.
+  $items['admin/tripal/extension/scidas/edit/%'] = [
+    'description' => 'Edit a scidas instance',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => [
+      'tripal_scidas_admin_configuration_form',
+      5,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin_configuration_form.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+  ];
+
+  // Test SciDAS.
+  $items['admin/tripal/extension/scidas/test/%'] = [
+    'description' => 'Test a scidas instance',
+    'page callback' => 'tripal_scidas_admin_test_server',
+    'page arguments' => [
+      5,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+  ];
+
+  // Disable workflows for this SciDAS.
+  $items['admin/tripal/extension/scidas/disable/%'] = [
+    'description' => 'Disable all workflows for this scidas server',
+    'page callback' => 'tripal_scidas_admin_disable_workflows',
+    'page arguments' => [
+      5,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+  ];
+
+  // Enable workflows for this SciDAS.
+  $items['admin/tripal/extension/scidas/enable/%'] = [
+    'description' => 'Enable all workflows for this scidas server',
+    'page callback' => 'tripal_scidas_admin_enable_workflows',
+    'page arguments' => [
+      5,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+  ];
+
+  // Add SciDAS.
+  $items['admin/tripal/extension/scidas/add'] = [
+    'description' => 'Add a scidas server instance',
+    'title' => 'Add SciDAS Instance',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => [
+      'tripal_scidas_admin_configuration_form',
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_LOCAL_ACTION,
+    'file' => 'includes/tripal_scidas.admin_configuration_form.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+  ];
+
+  $items['admin/tripal/extension/scidas/delete/%'] = [
+    'description' => 'Delete a scidas server instance',
+    'title' => 'Delete SciDAS Instance',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => [
+      'tripal_scidas_admin_delete_scidas_instance_form',
+      5,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin_configuration_form.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+  ];
+
+  // Available Workflows.
+  $items['admin/tripal/extension/scidas/workflows'] = [
+    'title' => 'Workflows',
+    'description' => 'Lists the available Workflows of the user',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => [
+      'tripal_scidas_admin_workflows_form',
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'includes/tripal_scidas.admin_workflow_form.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+    'weight' => 5,
+  ];
+  // Add Workflows.
+  $items['admin/tripal/extension/scidas/workflows/add'] = [
+    'title' => 'Add Workflows',
+    'description' => 'Add workflows to the site given the remote scidas instance',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => [
+      'tripal_scidas_admin_add_workflow_form',
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_LOCAL_ACTION,
+    'file' => 'includes/tripal_scidas.admin_workflow_form_add.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+  ];
+
+  // Remove Workflows.
+  $items['admin/tripal/extension/scidas/workflows/remove/%'] = [
+    'description' => 'Remove a workflow from site',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => [
+      'tripal_scidas_admin_confirm_remove_workflow_form',
+      6,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+    'weight' => 10,
+  ];
+
+  // Disable Workflows.
+  $items['admin/tripal/extension/scidas/workflows/disable/%'] = [
+    'description' => 'Disable this workflow',
+    'page callback' => 'tripal_scidas_admin_disable_workflow',
+    'page arguments' => [
+      6,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+    'weight' => 10,
+  ];
+
+  // Enable Workflows.
+  $items['admin/tripal/extension/scidas/workflows/enable/%'] = [
+    'description' => 'Enable this workflow',
+    'page callback' => 'tripal_scidas_admin_enable_workflow',
+    'page arguments' => [
+      6,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+    'weight' => 10,
+  ];
+
+  $items['admin/tripal/extension/scidas/workflows/settings/%'] = [
+    'description' => 'Settings for the workflow',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => [
+      'tripal_scidas_admin_workflow_settings_form',
+      6,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+    'weight' => 10,
+  ];
+
+
+  // Admin submission report.
+  $items['admin/tripal/extension/scidas/workflows/report/%'] = [
+    'title' => 'Workflow Submission Details',
+    'description' => 'The report for a submitted workflow.',
+    'page callback' => 'tripal_scidas_submission_admin_report',
+    'page arguments' => [
+      6,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+    'weight' => 10,
+  ];
+
+  //
+  // USER SUBMITTED WORKFLOW JOBS
+  //
+  // User submission report.
+  $items['user/%/scidas-jobs/%'] = [
+    'title' => 'Analysis Results',
+    'description' => 'The results for a submitted analysis.',
+    'page callback' => 'tripal_scidas_submission_user_report',
+    'page arguments' => [
+      3,
+    ],
+    'access arguments' => [
+      'use scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.user.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+    'weight' => 10,
+  ];
+
+  // User report page.
+  $items['user/%/scidas-jobs/%/results'] = [
+    'title' => 'Workflow Submission Files',
+    'description' => 'The files from a submitted workflow.',
+    'page callback' => '',
+    'page arguments' => [
+      3,
+    ],
+    'access arguments' => [
+      'use scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+    'weight' => 10,
+  ];
+
+  // Usage.
+  $items['admin/tripal/extension/scidas/usage'] = [
+    'title' => 'Usage',
+    'description' => 'View Usage of SciDAS Workflows',
+    'page callback' => 'tripal_scidas_admin_usage_page',
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'includes/tripal_scidas.admin_usage.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+    'weight' => 20,
+  ];
+
+  //
+  // SITE-WIDE FILES
+  // .
+  $items['admin/tripal/extension/scidas/files'] = [
+    'title' => 'Files',
+    'description' => 'Files available site-wide for workflows.',
+    'page callback' => 'tripal_scidas_admin_manage_files',
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'includes/tripal_scidas.admin_files.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+    'weight' => 40,
+  ];
+  $items['admin/tripal/extension/scidas/files/add'] = [
+    'title' => 'Add a New File',
+    'description' => 'Files available site-wide for workflows.',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => [
+      'tripal_scidas_admin_add_file_form',
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_LOCAL_ACTION,
+    'file' => 'includes/tripal_scidas.admin_files.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+  ];
+  $items['admin/tripal/extension/scidas/files/disable/%'] = [
+    'description' => "Disable a file.",
+    'page callback' => 'tripal_scidas_admin_disable_file',
+    'page arguments' => [
+      6,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin_files.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+  ];
+  $items['admin/tripal/extension/scidas/files/enable/%'] = [
+    'description' => "Enable a file.",
+    'page callback' => 'tripal_scidas_admin_enable_file',
+    'page arguments' => [
+      6,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin_files.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+  ];
+  $items['admin/tripal/extension/scidas/files/edit/%'] = [
+    'title' => 'Edit File Details',
+    'description' => "Edit a site-wide file.",
+    'page callback' => 'drupal_get_form',
+    'page arguments' => [
+      'tripal_scidas_admin_edit_file_form',
+      6,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin_files.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+  ];
+  $items['admin/tripal/extension/scidas/files/delete/%'] = [
+    'title' => 'Delete File',
+    'description' => "Deletes a site-wide file.",
+    'page callback' => 'drupal_get_form',
+    'page arguments' => [
+      'tripal_scidas_admin_delete_file_form',
+      6,
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_CALLBACK,
+    'file' => 'includes/tripal_scidas.admin_files.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+  ];
+
+  $items['scidas/proxy/%'] = [
+    'title' => 'Results Viewer',
+    'page callback' => 'tripal_scidas_stream_url_proxy',
+    'page arguments' => [
+      2,
+    ],
+    'access arguments' => [
+      'use scidas',
+    ],
+    'type' => MENU_CALLBACK,
+  ];
+  $items['scidas/viewer/%'] = [
+    'title' => 'Results Viewer',
+    'page callback' => 'tripal_scidas_results_viewer_page',
+    'page arguments' => [
+      2,
+    ],
+    'access arguments' => [
+      'use scidas',
+    ],
+    'type' => MENU_CALLBACK,
+  ];
+  $items['scidas/viewer-full/%'] = [
+    'title' => 'Results Viewer',
+    'page callback' => 'tripal_scidas_results_viewer_full_page',
+    'page arguments' => [
+      2,
+    ],
+    'access arguments' => [
+      'use scidas',
+    ],
+    'type' => MENU_CALLBACK,
+  ];
+  $items['scidas/download/%'] = [
+    'title' => 'Download',
+    'page callback' => 'tripal_scidas_results_download',
+    'page arguments' => [
+      2,
+    ],
+    'access arguments' => [
+      'use scidas',
+    ],
+    'type' => MENU_CALLBACK,
+  ];
+
+  // SETTINGS
+  // Available Workflows.
+  $items['admin/tripal/extension/scidas/settings'] = [
+    'title' => 'Settings',
+    'description' => 'SciDAS Settings',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => [
+      'tripal_scidas_admin_settings_form',
+    ],
+    'access arguments' => [
+      'administer scidas',
+    ],
+    'type' => MENU_LOCAL_TASK,
+    'file' => 'includes/tripal_scidas.admin_settings_form.inc',
+    'file path' => drupal_get_path('module', 'tripal_scidas'),
+    'weight' => 50,
+  ];
+
+  return $items;
+}
+
+
+
+
+/**
+ * Implements hook_views_api().
+ *
+ * This hook tells drupal that there is views
+ * support for for this module which then automatically includes the
+ * tripal_db.views.inc where all the views integration code is found.
+ *
+ * @ingroup
+ * tripal_scidas
+ */
+function tripal_scidas_views_api() {
+  return [
+    'api' => 3.0,
+  ];
+}
+
+/**
+ * Implements hook_theme().
+ *
+ * We need to let drupal know about our theme functions and their arguments.
+ * We create theme functions to allow users of the module to customize the
+ * look and feel of the output generated in this module @ingroup tripal_scidas.
+ */
+function tripal_scidas_theme($existing, $type, $theme, $path) {
+  $items = [
+    'tripal_scidas_admin_workflows_form_rows' => [
+      'render element' => 'form',
+    ],
+  ];
+  return $items;
+}
+
+
+
+
+/**
+ * Webform submission presave function.
+ */
+function tripal_scidas_webform_submission_presave($node, &$submission) {
+
+
+}
+
+/**
+ * The report page for a scidas workflow submission.
+ *
+ * @param int $sid
+ *   The submission ID of the workflow.
+ */
+function tripal_scidas_nfworkflow_report(int $sid) {
+
+  return $content;
+}
+
+/**
+ * Retrieves the workflow submission report for an admin user.
+ *
+ * @param int $sid
+ *   The webform submission ID.
+ */
+function tripal_scidas_submission_admin_report($sid) {
+
+  // Set the breadcrumb.
+  $breadcrumb = [];
+  $breadcrumb[] = l(t('Home'), '<front>');
+  $breadcrumb[] = l(t('Administration'), 'admin');
+  $breadcrumb[] = l(t('Tripal'), 'admin/tripal');
+  $breadcrumb[] = l(t('Extensions'), 'admin/tripal/extension');
+  $breadcrumb[] = l(t('SciDAS'), 'admin/tripal/extension/scidas');
+  $breadcrumb[] = l(t('Job Queue'), 'admin/tripal/extension/scidas/job-queue');
+  drupal_set_breadcrumb($breadcrumb);
+
+  return tripal_scidas_nfworkflow_report($sid);
+}
+
+/**
+ * Implements hook_cron().
+ */
+function tripal_scidas_cron() {
+  $args = [];
+
+
+}
+
+/**
+ * Checks the remote SciDAS servers to make sure they are up and running.
+ */
+function tripal_scidas_check_servers() {
+  // Retrieve the list of scidas servers
+  $sql = "SELECT * FROM {tripal_scidas}";
+  $results = db_query($sql);
+
+  while ($result = $results->fetchObject()) {
+    $server_status = tripal_scidas_test_connection(['scidas_id' => $result->scidas_id,]);
+    if ($server_status === FALSE) {
+
+      // Update status in the db.
+      db_update('tripal_scidas')->fields(['serverstatus' => 'unavailable'])
+        ->condition('scidas_id', $result->scidas_id, '=')
+        ->execute();
+
+      // Put a message on the dashboard.
+      $title = t('SciDAS Server %servername was unreachable when tested at %time', [
+        '%server' => $result->servername,
+        '%time' => format_date(time()),
+      ]);
+      $details = t('SciDAS Server %servername was unreachable when tested at %time. Please check the server status. If the server is down you may disable the workflows associated with that server by going to the Tripal SciDAS admin page.', [
+        '%server' => $result->servername,
+        '%time' => format_date(time()),
+      ]);
+      $actions['Disable Server\'s Workflows'] = 'admin/tripal/extension/scidas/disable/' . $result->scidas_id;
+      $type = 'Tripal SciDAS';
+      $submitter_id = 'tripal_scidas' . $result->servername . time();
+      tripal_add_notification($title, $details, $type, $actions, $submitter_id);
+    }
+    else {
+      if ($server_status === TRUE) {
+        db_update('tripal_scidas')->fields(['serverstatus' => 'available',])
+          ->condition('scidas_id', $result->scidas_id, '=')
+          ->execute();
+
+        // Make sure no notification is up about the server being down.
+        $submitter_id = 'tripal_scidas' . $result->servername;
+        $note = db_select('tripal_admin_notfications', 'tan')->fields('tan')
+          ->condition('submitter_id', $submitter_id, '=')
+          ->execute()
+          ->fetchAll();
+        if ($note) {
+          db_delete('tripal_admin_notfications')
+            ->condition('submitter_id', $submitter_id)
+            ->execute();
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Checks the status of non completed workflows.
+ *
+ * This function is meant to be added by cron and run by the TripalJob's system.
+ *
+ * @param TripalJob $job
+ *   An instance of a TripalJob object.
+ */
+function tripal_scidas_check_status(TripalJob $job) {
+
+}
+
+/**
+ * Implements hook_mail().
+ */
+function tripal_scidas_mail($key, &$message, $params) {
+  $site_name = variable_get('site_name', 'Drupal');
+  $submission = $params['submission'];
+  $title = $params['title'];
+
+  $workflow = $submission->workflow;
+  $email_text = tripal_scidas_get_email_text($workflow);
+
+  switch ($key) {
+    case 'submission-started':
+      $email_text = tripal_scidas_untokenize_email_text($submission, 'invoke');
+      $message['subject'] = $email_text['subject'];
+      $message['body'] = $email_text['body'];
+      break;
+
+    case 'submission-ended':
+      $email_text = tripal_scidas_untokenize_email_text($submission, 'success');
+      $message['subject'] = $email_text['subject'];
+      $message['body'] = $email_text['body'];
+      break;
+
+    case 'submission-failed':
+      $email_text = tripal_scidas_untokenize_email_text($submission, 'failure');
+      $message['subject'] = $email_text['subject'];
+      $message['body'] = $email_text['body'];
+      break;
+  }
+}
+
+/**
+ * Replaces tokens in the email text.
+ */
+function tripal_scidas_untokenize_email_text($submission, $type) {
+  $message = tripal_scidas_get_email_text($submission->workflow);
+  $new_message = [];
+  $new_message['subject'] = tripal_scidas_untokenize_email_line($submission, $message[$type]['subject']);
+  $new_message['body'] = [];
+  foreach ($message[$type]['body'] as $line) {
+    $new_message['body'][] = tripal_scidas_untokenize_email_line($submission, $line);
+  }
+  return $new_message;
+}
+
+/**
+ * A helper function for tripal_scidas_untokenize_email_text().
+ */
+function tripal_scidas_untokenize_email_line($submission, $line) {
+  $user = user_load($submission->uid);
+  $line = preg_replace('/\[site_name\]/', variable_get('site_name'), $line);
+  $line = preg_replace('/\[workflow_title\]/', $submission->node_title ? $submission->node_title : $submission->workflow->workflow_name, $line);
+  $line = preg_replace('/\[submission_init\]/', $submission->submit_date ? format_date($submission->submit_date) : '', $line);
+  $line = preg_replace('/\[submission_start\]/', $submission->start_time ? format_date($submission->start_time) : '', $line);
+  $line = preg_replace('/\[submission_end\]/', $submission->end_time ? format_date($submission->end_time) : '', $line);
+  $line = preg_replace('/\[submission_status\]/', $submission->status, $line);
+  $line = preg_replace('/\[user_name\]/', $user->name, $line);
+  $line = preg_replace('/\[jobs_link\]/', url('/user/' . $user->uid . '/scidas-jobs', ['absolute' => TRUE]), $line);
+  $line = preg_replace('/\[results_link\]/', url('/user/' . $user->uid . '/scidas-jobs/'. $submission->sid, ['absolute' => TRUE]), $line);
+
+  return $line;
+}
+
+
+/**
+ * Retrieves the email content defaults.
+ */
+function tripal_scidas_get_email_text($workflow) {
+
+  // Set the defaults.
+  $email_text = [
+    'success' => [
+      'subject' => 'Your job at [site_name] has completed',
+      'body' => [
+        "You recently submitted a job titled: [workflow_title].",
+        "This job has completed.",
+        "You may view results of this job at [results_link].",
+        "Thank you.",
+      ],
+      'no_email' => 0
+    ],
+    'failure' => [
+      'subject' => 'Your job at [site_name] has failed',
+      'body' => [
+        "You recently submitted a job titled: [workflow_title].",
+        "This job has failed.",
+        "You may view error reports for this job at [jobs_link].",
+        "Thank you.",
+      ],
+      'no_email' => 0
+    ],
+    'invoke' => [
+      'subject' => 'Your job at [site_name] has started',
+      'body' => [
+        "You recently submitted a job titled: [workflow_title].",
+        "This job has started.",
+        "You may check the status of all your submitted jobs at [jobs_link].",
+        "Thank you.",
+      ],
+      'no_email' => 0
+    ],
+  ];
+
+  // Check the settings for the failure email.
+  $value = tripal_scidas_get_workflow_setting($workflow, 'email_failure_subject');
+  if ($value) {
+    $email_text['failure']['subject'] = $value;
+  }
+  $value = tripal_scidas_get_workflow_setting($workflow, 'email_failure_body');
+  if ($value) {
+    $email_text['failure']['body'] = explode("\n", $value);
+  }
+  $value = tripal_scidas_get_workflow_setting($workflow, 'no_failure_email');
+  if ($value) {
+    $email_text['failure']['no_email'] = $value;
+  }
+
+  // Check the settings for the success email.
+  $value = tripal_scidas_get_workflow_setting($workflow, 'email_success_subject');
+  if ($value) {
+    $email_text['success']['subject'] = $value;
+  }
+  $value = tripal_scidas_get_workflow_setting($workflow, 'email_success_body');
+  if ($value) {
+    $email_text['success']['body'] = explode("\n", $value);
+  }
+  $value = tripal_scidas_get_workflow_setting($workflow, 'no_success_email');
+  if ($value) {
+    $email_text['success']['no_email'] = $value;
+  }
+
+  // Check the settings for the invocation email.
+  $value = tripal_scidas_get_workflow_setting($workflow, 'email_invoke_subject');
+  if ($value) {
+    $email_text['invoke']['subject'] = $value;
+  }
+  $value = tripal_scidas_get_workflow_setting($workflow, 'email_invoke_body');
+  if ($value) {
+    $email_text['invoke']['body'] = explode("\n", $value);
+  }
+  $value = tripal_scidas_get_workflow_setting($workflow, 'no_invoke_email');
+  if ($value) {
+    $email_text['invoke']['no_email'] = $value;
+  }
+  return $email_text;
+}
+
+
+
+/**
+ * Sends an email to the user when a SciDAS job starts.
+ *
+ * @param int $sid
+ *   The Submission ID of the job.
+ */
+function tripal_scidas_send_submission_start_mail(int $sid) {
+  $submission = tripal_scidas_get_submission($sid);
+
+  // If the email should not be sent then just return.
+  $no_send = tripal_scidas_get_workflow_setting($submission->workflow, 'no_invoke_email');
+  if ($no_send) {
+    return;
+  }
+
+  $user = user_load($submission->uid);
+  $module = 'tripal_scidas';
+  $key = 'submission-started';
+
+  // Specify 'to' and 'from' addresses.
+  $to = $user->mail;
+  $from = variable_get('site_mail', 'admin@localhost.localdomain');
+
+  // "params" loads in additional context for email content completion in
+  // hook_mail(). In this case, we want to pass in the values the user entered
+  // into the form, which include the message body in $form_values['message'].
+  $params = [
+    'submission' => $submission,
+    'title' => $submission->webform_title ? $submission->webform_title : $submission->workflow_title,
+  ];
+
+  // The language of the e-mail.
+  $language = language_default();
+
+  // Whether or not to automatically send the mail when drupal_mail() is called.
+  $send = TRUE;
+
+  // Send the mail, and check for success. Note that this does not guarantee
+  // message delivery; only that there were no PHP-related issues encountered
+  // while sending.
+  $result = drupal_mail($module, $key, $to, $language, $params, $from, $send);
+  if ($result['result'] != TRUE) {
+    watchdog('tripal_scidas',
+      'There was a problem sending your message and it was not sent.', [], WATCHDOG_ERROR);
+  }
+}
+
+/**
+ * Sends an email to the user when a SciDAS job ends.
+ *
+ * @param int $sid
+ *   The Submission ID of the job.
+ */
+function tripal_scidas_send_submission_ended_mail(int $sid) {
+
+  $submission = tripal_scidas_get_submission($sid);
+
+  // If the email should not be sent then just return.
+  $no_send = tripal_scidas_get_workflow_setting($submission->workflow, 'no_success_email');
+  if ($no_send) {
+    return;
+  }
+
+  $user = user_load($submission->uid);
+  $module = 'tripal_scidas';
+  $key = 'submission-ended';
+
+  // Specify 'to' and 'from' addresses.
+  $to = $user->mail;
+  $from = variable_get('site_mail', 'admin@localhost.localdomain');
+
+  // "params" loads in additional context for email content completion in
+  // hook_mail(). In this case, we want to pass in the values the user entered
+  // into the form, which include the message body in $form_values['message'].
+  $params = [
+    'submission' => $submission,
+    'title' => $submission->webform_title ? $submission->webform_title : $submission->workflow_title,
+  ];
+
+  // The language of the e-mail.
+  $language = language_default();
+
+  // Whether or not to automatically send the mail when drupal_mail() is called.
+  $send = TRUE;
+
+  // Send the mail, and check for success. Note that this does not guarantee
+  // message delivery; only that there were no PHP-related issues encountered
+  // while sending.
+  $result = drupal_mail($module, $key, $to, $language, $params, $from, $send);
+
+  if ($result['result'] != TRUE) {
+    db_update('tripal_scidas_nfworkflow_submission')->fields(array(
+      'email' => 'SENT',
+    ))
+      ->condition('sid', $sid)
+      ->execute();
+    watchdog('tripal_scidas', 'There was a problem sending your message and it was not sent.', [], WATCHDOG_ERROR);
+  }
+  else {
+    db_update('tripal_scidas_nfworkflow_submission')->fields([
+      'email' => 'SENT',
+    ])
+      ->condition('sid', $sid)
+      ->execute();
+  }
+}
+
+/**
+ * Sends an email to the user when a SciDAS job failes.
+ *
+ * @param int $sid
+ *   The Submission ID of the job.
+ */
+function tripal_scidas_send_submission_failed_mail($sid) {
+  $submission = tripal_scidas_get_submission($sid);
+
+  // If the email should not be sent then just return.
+  $no_send = tripal_scidas_get_workflow_setting($submission->workflow, 'no_failure_email');
+  if ($no_send) {
+    return;
+  }
+
+  $user = user_load($submission->uid);
+  $module = 'tripal_scidas';
+  $key = 'submission-failed';
+
+  // Specify 'to' and 'from' addresses.
+  $to = $user->mail;
+  $from = variable_get('site_mail', 'admin@localhost.localdomain');
+
+  // "params" loads in additional context for email content completion in
+  // hook_mail(). In this case, we want to pass in the values the user entered
+  // into the form, which include the message body in $form_values['message'].
+  $params = [
+    'submission' => $submission,
+    'title' => $submission->webform_title ? $submission->webform_title : $submission->workflow_title,
+  ];
+
+  // The language of the e-mail.
+  $language = language_default();
+
+  // Whether or not to automatically send the mail when drupal_mail() is called.
+  $send = TRUE;
+
+  // Send the mail, and check for success. Note that this does not guarantee
+  // message delivery; only that there were no PHP-related issues encountered
+  // while sending.
+  $result = drupal_mail($module, $key, $to, $language, $params, $from, $send);
+  if ($result['result'] != TRUE) {
+    watchdog('tripal_scidas', 'There was a problem sending your message and it was not sent.', [], WATCHDOG_ERROR);
+  }
+  else {
+    db_update('tripal_scidas_nfworkflow_submission')->fields([
+      'email' => 'SENT',
+    ])
+      ->condition('sid', $sid)
+      ->execute();
+  }
+}
